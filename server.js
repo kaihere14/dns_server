@@ -1,44 +1,44 @@
-const dns2 = require('dns2');
-const ioredis = require('ioredis');
-const dotenv = require('dotenv');
-dotenv.config();
+const dns2 = require("dns2");
+const Redis = require("ioredis");
+require("dotenv").config();
 
 const { Packet } = dns2;
-const redis = new ioredis({
-  host:process.env.REDIS_HOST 
-  ,port:process.env.REDIS_PORT
-  ,password:process.env.REDIS_PASSWORD
-  ,username:'default' 
-});
-redis.on('connect', () => {
-  console.log('Connected to Redis');
+
+const redis = new Redis({
+  host: process.env.REDIS_HOST,
+  port: process.env.REDIS_PORT,
+  password: process.env.REDIS_PASSWORD,
+  username: "default",
 });
 
-
+redis.on("connect", () => {
+  console.log("Connected to Redis");
+});
 
 const server = dns2.createServer({
   udp: true,
+
   handle: async (request, send) => {
-  const response = Packet.createResponseFromRequest(request);
-  const [question] = request.questions;
-  const { name } = question;
+    const response = Packet.createResponseFromRequest(request);
+    const [question] = request.questions;
+    const name = question.name;
 
-  // Only serve your zone
-  if (!name.endsWith(".pawpick.store")) {
-    response.header.rcode = Packet.RCODE.REFUSED;
-    return send(response);
-  }
+    // Only answer for your domain
+    if (!name.endsWith("pawpick.store")) {
+      response.header.rcode = 5; // REFUSED
+      return send(response);
+    }
 
-  try {
     const cached = await redis.get(name);
 
     if (!cached) {
-      response.header.rcode = Packet.RCODE.NXDOMAIN;
+      response.header.rcode = 3; // NXDOMAIN
       return send(response);
     }
 
     const record = JSON.parse(cached);
 
+    // A record
     if (record.type === "A") {
       response.answers.push({
         name,
@@ -49,6 +49,7 @@ const server = dns2.createServer({
       });
     }
 
+    // CNAME record
     else if (record.type === "CNAME") {
       response.answers.push({
         name,
@@ -60,38 +61,21 @@ const server = dns2.createServer({
     }
 
     else {
-      response.header.rcode = Packet.RCODE.NOTIMP;
+      response.header.rcode = 4; // NOTIMP
     }
 
     send(response);
-  } catch (err) {
-    console.error("DNS error:", err);
-    response.header.rcode = Packet.RCODE.SERVFAIL;
-    send(response);
-  }
-}
-
+  },
 });
 
-server.on('request', (request, response, rinfo) => {
-  console.log(request.header.id, request.questions[0]);
-});
-
-
-
-server.on('listening', () => {
+server.on("listening", () => {
   console.log(server.addresses());
 });
 
-
-
 server.listen({
-  // Optionally specify port, address and/or the family of socket() for udp server:
-  udp: { 
+  udp: {
     port: 53,
     address: "0.0.0.0",
-    type: "udp4",  // IPv4 or IPv6 (Must be either "udp4" or "udp6")
+    type: "udp4",
   },
-  
 });
-
